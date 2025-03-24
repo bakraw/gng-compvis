@@ -25,5 +25,5 @@ testing_dataset = torchvision.datasets.MNIST(root='./data', train=False, downloa
 training_dataloader = torch.utils.data.DataLoader(training_dataset, shuffle=True)
 testing_dataloader = torch.utils.data.DataLoader(testing_dataset, shuffle=True)
 
-model = gng.Gng(0.01, 0.001, 100, 100, 0.001, 2, 14*14, 200)
+model = gng.Gng(0.2, 0.006, 50, 100, 0.5, 0.995, 2, 14*14, 200)
 model.train(training_dataloader)
