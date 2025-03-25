@@ -7,11 +7,9 @@
 
 
 import torch
-import torchvision
 
 
 ################################### MODEL ##################################
-
 
 class Gng(torch.nn.Module):
     def __init__(self, e_b, e_n, a_max, l, a, d, passes, input_dim, max_nodes):   
@@ -58,9 +56,6 @@ class Gng(torch.nn.Module):
         # "resize" it later on (i.e. recreating the entire matrix).
         self.register_buffer('_edges', torch.zeros(max_nodes, max_nodes, device=self.device))
 
-        # Move all tensors to the device.
-        self._nodes = self._nodes.to(self.device)
-        self._edges = self._edges.to(self.device)
 
         # Create an edge between the first two nodes.
         self._connect_nodes(0, 1)
@@ -71,16 +66,49 @@ class Gng(torch.nn.Module):
     #----------- PUBLIC METHODS -----------#
 
 
-    def train(self, data_loader):
+    def train(self, data_loader, class_count):
         """
         Begin training the network on the given data.
 
         :param data_loader: A PyTorch DataLoader object.
+        :param class_count: The number of classes in the dataset.
         """
+
+        # The labels tensor is a 2D tensor (nodes x classes) which counts how many
+        # times a node has been the BMU for a given class.
+        self._labels = torch.zeros(self._nodes.shape[0], class_count, device=self.device)
+
         for epoch in range(self._passes):
             print(f"\033[94mEpoch {epoch + 1} / {self._passes}\033[0m")
             for i, (images, labels) in enumerate(data_loader):
                 self.forward((images, labels))
+        
+        print("\033[92m✓ Training complete.\033[0m")
+
+    def test(self, data_loader):
+        """
+        Test the network on the given data.
+
+        :param data_loader: A PyTorch DataLoader object.
+        """
+
+        total = 0
+        total_correct = 0
+        for i, (images, labels) in enumerate(data_loader):
+            for image in images:
+                total += 1
+
+                closest_node = self._get_closest(image, 1)
+
+                # Prediction (i.e. label that has activated the closest node the most).
+                predicted_label = self._labels[closest_node].argmax().item()
+                actual_label = labels[0].item()
+                if predicted_label == actual_label: total_correct += 1
+
+                if total % 1000 == 0:
+                    print(f"\033[93mTested {total} images | Accuracy: {total_correct / total * 100:.2f}%\033[0m")
+        
+        print(f"\033[92m✓ Test complete. Accuracy: {total_correct / total * 100:.2f}%\033[0m")
 
 
     #----------- PRIVATE METHODS -----------#
@@ -109,9 +137,11 @@ class Gng(torch.nn.Module):
         # Core algorithm
         # Step 1: Generate an input signal
         for image in images:
-            #if self._inputs_count > 10: break
-            # Step 2: Find the two nodes closest to the input signal
-            bmu, second_closest = self._get_closest(image)
+            if self._inputs_count % 10000 == 0: print(f"\033[93mProcessed {self._inputs_count} inputs | {self._nodes.shape[0]} nodes\033[0m")
+            #if self._inputs_count > 1000: break
+            # Step 2: Find the two nodes closest to the input signal (& increment label count for the node)
+            bmu, second_closest = self._get_closest(image, 2)
+            self._labels[bmu][labels] += 1
             # Step 3: Increment the age of all edges connected to the BMU
             self._increment_ages(bmu)
             # Step 4: Increase the BMU's local error
@@ -126,19 +156,18 @@ class Gng(torch.nn.Module):
             if self._inputs_count % self._l == 0 and self._nodes.shape[0] < self._max_nodes:
                 self._insert_node()
             # Step 9: Increment error of all nodes
-            self._increment_errors()
+            self._local_error *= self._d
 
             self._inputs_count += 1
-            print(self._inputs_count)
 
 
-
-    def _get_closest(self, image):
+    def _get_closest(self, image, k):
         """
-        Find the two nodes closest to the input image.
+        Find the k nodes closest to the input image.
         Step 2 of the GNG algorithm.
 
         :param image: A PyTorch tensor representing an image.
+        :param k: The number of nodes to return.
         :return: A tensor containing the indices of the two closest nodes, first one being the BMU.
         """
 
@@ -147,12 +176,9 @@ class Gng(torch.nn.Module):
         # We then take the norm of this difference to get the distance.
         distances = torch.norm(self._nodes - image.view(-1), dim=1)
 
-        print("Distances: ", distances)
-        print("Closest nodes: ", torch.topk(distances, 2, largest=False)[1])
-
         # torch.topk() returns a tuple of two tensors (values, indices).
         # We only need the indices, so we can just take the second element of the tuple.
-        return torch.topk(distances, 2, largest=False)[1]
+        return torch.topk(distances, k, largest=False)[1]
 
 
     def _increment_ages(self, node):
@@ -166,15 +192,11 @@ class Gng(torch.nn.Module):
         # Get the indices of all edges connected to the given node.
         connected_edges = torch.nonzero(self._edges[node], as_tuple=True)[0]
 
-        #print("Connected edges: ", connected_edges)
-
         # Increment the age of all edges connected to the given node.
         # We have to do this for both directions since the adjacency matrix is symmetric.
         # PyTorch's "advanced indexing" allows us to use whole arrays as indices.
         self._edges[node, connected_edges] += 1
         self._edges[connected_edges, node] += 1
-
-        print("Ages: ", self._edges)
 
 
     def _squared_error(self, node, distance):
@@ -186,8 +208,6 @@ class Gng(torch.nn.Module):
         :param distance: The distance between the given node and the input signal.
         """
         self._local_error[node] += distance ** 2
-
-        #print("Local errors: ", self._local_error)
 
 
     def _move_nodes(self, node, image):
@@ -203,8 +223,6 @@ class Gng(torch.nn.Module):
 
         # Get the indices of all edges connected to the given node.
         connected_edges = torch.nonzero(self._edges[node], as_tuple=True)
-        print("Nodes: ", self._nodes)
-        print("Connected edges: ", connected_edges)
 
         # Calculate the difference between the input signal and the node.
         difference = image.view(-1) - self._nodes[node]
@@ -236,32 +254,22 @@ class Gng(torch.nn.Module):
         """
     
         # Get the indices of all edges older than the maximum age and remove them.
-        #print("Edges before prune: ", self._edges)
         old_edges = torch.nonzero(input=self._edges > self._a_max, as_tuple=True)
-        #print("Old edges: ", old_edges)
         self._edges[old_edges] = 0
-        print("Edges after prune: ", self._edges)
 
         # Get the indices of all nodes with no connected neighbors and remove them. 
         # We first get the indices of all nodes with at least one connected neighbor by summing the adjacency matrix.
-        connected_nodes = torch.nonzero(torch.sum(self._edges, dim=1), as_tuple=True)
-        print("Connected nodes: ", connected_nodes)
+        connected_nodes = torch.nonzero(torch.sum(self._edges, dim=1), as_tuple=True)[0]
 
-        single_nodes = torch.nonzero(torch.sum(input=self._edges, dim=1) == 0, as_tuple=True)[0]
-        single_nodes = torch.nonzero(torch.sum(input=single_nodes) <= self._nodes.shape[0], as_tuple=True)[0]
-        print("-----", single_nodes)
-        single_nodes = single_nodes[:self._nodes.shape[0]]
-        print("Single nodes: ", single_nodes)
-        
         # Remove the nodes with no connected neighbors.
-        # We also need to update the local error tensor and the edges tensor.
-        #self._nodes = self._nodes[connected_nodes]
-        if len(single_nodes) > 0:
-            self._nodes[single_nodes] = 999
+        # We also need to update the local error tensor and the labels tensor.
+        self._nodes = self._nodes[connected_nodes]
         self._local_error = self._local_error[connected_nodes]
+        self._labels = self._labels[connected_nodes]
 
-        print("Nodes after prune: ", self._nodes)
-
+        # Update the adjacency matrix.
+        self._edges = self._edges[: , connected_nodes]
+        self._edges = self._edges[connected_nodes, :]
 
     def _insert_node(self):
         """
@@ -272,32 +280,39 @@ class Gng(torch.nn.Module):
 
         # Get the index of the node with the largest error.
         largest_error_node = torch.argmax(self._local_error)
-        print("Largest error node: ", largest_error_node)
 
         # Get the node's connected neighbors.
         connected_nodes = torch.nonzero(self._edges[largest_error_node], as_tuple=True)[0]
-        print("Connected nodes: ", connected_nodes)
 
         # Get the index of the neighbor with the largest error.
         largest_error_neighbor = torch.argmax(self._local_error[connected_nodes])
 
         # Create a new node between them
         # We first have to create an empty tensor with the correct size, then fill it with the values we want.
-        self._nodes = torch.cat((self._nodes, torch.zeros(1, self._input_dim)))
+        self._nodes = torch.cat((self._nodes, torch.zeros(1, self._input_dim, device=self.device)))
         self._nodes[self._nodes.shape[0] - 1] = (self._nodes[largest_error_node] + self._nodes[connected_nodes[largest_error_neighbor]]) / 2
 
         # Same process for the error tensor.
-        self._local_error = torch.cat((self._local_error, torch.zeros(1)))
+        self._local_error = torch.cat((self._local_error, torch.zeros(1, device=self.device)))
         self._local_error[self._local_error.shape[0] - 1] = self._local_error[largest_error_node]
 
-        print("Nodes: ", self._nodes)
-        print("Local errors: ", self._local_error)
-
-
-    def _increment_errors(self):
-        """
-        Mutliply local error of all nodes by a factor of d.
-        Step 9 of the GNG algorithm.
-        """
+        # Add row the labels tensor.
+        self._labels = torch.cat((self._labels, torch.zeros(1, 10, device=self.device)))
         
-        self._local_error *= self._d
+
+        # Multiply their errors by alpha.
+        self._local_error[largest_error_node] *= self._a
+        self._local_error[connected_nodes[largest_error_neighbor]] *= self._a
+
+        # Add row and column to the adjacency matrix.
+        self._edges = torch.cat((self._edges, torch.zeros(self._edges.shape[0], 1, device=self.device)), dim=1)
+        self._edges = torch.cat((self._edges, torch.zeros(1, self._edges.shape[1], device=self.device)), dim=0)
+
+        # Connect the new node to the two nodes with the largest error.
+        new_node = self._nodes.shape[0] - 1
+        self._connect_nodes(largest_error_node, new_node)
+        self._connect_nodes(largest_error_neighbor, new_node)
+
+        # Remove the edge between the two nodes with the largest error.
+        self._edges[largest_error_node, largest_error_neighbor] = 0
+        self._edges[largest_error_neighbor, largest_error_node] = 0
