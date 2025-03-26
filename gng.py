@@ -1,8 +1,3 @@
-"""
-
-"""
-
-
 ################################## IMPORTS ##################################
 
 
@@ -12,7 +7,7 @@ import torch
 ################################### MODEL ##################################
 
 class Gng(torch.nn.Module):
-    def __init__(self, e_b, e_n, a_max, l, a, d, passes, input_dim, max_nodes):   
+    def __init__(self, e_b, e_n, a_max, l, a, d, passes, input_dim, max_nodes, device="cpu"):   
         """
         Constructor for the GNG class.
 
@@ -24,7 +19,9 @@ class Gng(torch.nn.Module):
         :param passes: Number of passes over the training set (AKA epochs)
         :param input_dim: Dimensions of the input data (i.e. dimensions of the images)
         :param max_nodes: Maximum number of nodes in the network.
+        :param device: Device to use for training ("cpu" or "cuda")
         """
+
         super().__init__()
 
         self._e_b = e_b
@@ -36,14 +33,13 @@ class Gng(torch.nn.Module):
         self._passes = passes
         self._input_dim = input_dim
         self._max_nodes = max_nodes
+        self.device = device
 
-        # Determine the device to run on (i.e. CUDA if available, else CPU).
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print("\033[92m✓ CUDA available.\033[0m" if self.device.type == 'cuda' 
-                                                 else "\033[91m⚠ CUDA unavailable. Running on CPU.\033[0m")
+        print(f"\033[93m🛈 Initializing GNG on the CPU (recommended).\033[0m" if self.device=="cpu" 
+            else f"\033[93m🛈 Initializing GNG on the GPU (not recommended).\033[0m")
         
         # Disable gradient calculation, which is not needed for a GNG.
-        torch.set_grad_enabled(False)
+        torch.set_grad_enabled(True)
         
         # Initialize the first two nodes with random values.
         # We register the attributes as buffers, so that they are saved when we save the model.
@@ -54,8 +50,7 @@ class Gng(torch.nn.Module):
         # Edges are represented as an adjacency matrix, where each entry is the age of the edge (0 if no edge).
         # It is initialized at maximum size, which is a bit wasteful but avoids having to dynamically 
         # "resize" it later on (i.e. recreating the entire matrix).
-        self.register_buffer('_edges', torch.zeros(max_nodes, max_nodes, device=self.device))
-
+        self.register_buffer('_edges', torch.zeros(2, 2, device=self.device))
 
         # Create an edge between the first two nodes.
         self._connect_nodes(0, 1)
@@ -85,6 +80,7 @@ class Gng(torch.nn.Module):
         
         print("\033[92m✓ Training complete.\033[0m")
 
+
     def test(self, data_loader):
         """
         Test the network on the given data.
@@ -94,19 +90,19 @@ class Gng(torch.nn.Module):
 
         total = 0
         total_correct = 0
-        for i, (images, labels) in enumerate(data_loader):
-            for image in images:
+        for _, (images, labels) in enumerate(data_loader):
+            for i, image in enumerate(images):
                 total += 1
 
                 closest_node = self._get_closest(image, 1)
 
                 # Prediction (i.e. label that has activated the closest node the most).
                 predicted_label = self._labels[closest_node].argmax().item()
-                actual_label = labels[0].item()
+                actual_label = labels[i].item()
                 if predicted_label == actual_label: total_correct += 1
 
                 if total % 1000 == 0:
-                    print(f"\033[93mTested {total} images | Accuracy: {total_correct / total * 100:.2f}%\033[0m")
+                    print(f"Tested {total} images | Accuracy: {total_correct / total * 100:.2f}%")
         
         print(f"\033[92m✓ Test complete. Accuracy: {total_correct / total * 100:.2f}%\033[0m")
 
@@ -136,16 +132,15 @@ class Gng(torch.nn.Module):
 
         # Core algorithm
         # Step 1: Generate an input signal
-        for image in images:
-            if self._inputs_count % 10000 == 0: print(f"\033[93mProcessed {self._inputs_count} inputs | {self._nodes.shape[0]} nodes\033[0m")
-            #if self._inputs_count > 1000: break
+        for i, image in enumerate(images):
+            if self._inputs_count % 10000 == 0: print(f"Processed {self._inputs_count} inputs | {self._nodes.shape[0]} nodes")
             # Step 2: Find the two nodes closest to the input signal (& increment label count for the node)
             bmu, second_closest = self._get_closest(image, 2)
-            self._labels[bmu][labels] += 1
+            self._labels[bmu][labels[i]] += 1
             # Step 3: Increment the age of all edges connected to the BMU
             self._increment_ages(bmu)
-            # Step 4: Increase the BMU's local error
-            self._squared_error(bmu, torch.norm(self._nodes[bmu] - image.view(-1)))
+            # Step 4: Increase the BMU's local error by the squared distance between the BMU and the input signal
+            self._local_error[bmu] += torch.norm(self._nodes[bmu] - image.view(-1)) ** 2
             # Step 5: Update the position of the BMU and its neighbors
             self._move_nodes(bmu, image)
             # Step 6: Reset / create the edge between the BMU and the second closest node
@@ -155,7 +150,7 @@ class Gng(torch.nn.Module):
             # Step 8: Create a new node if we have reached the insertion threshold
             if self._inputs_count % self._l == 0 and self._nodes.shape[0] < self._max_nodes:
                 self._insert_node()
-            # Step 9: Increment error of all nodes
+            # Step 9: Decrease error of all nodes by a factor of d
             self._local_error *= self._d
 
             self._inputs_count += 1
@@ -168,7 +163,7 @@ class Gng(torch.nn.Module):
 
         :param image: A PyTorch tensor representing an image.
         :param k: The number of nodes to return.
-        :return: A tensor containing the indices of the two closest nodes, first one being the BMU.
+        :return: A tensor containing the indices of the k closest nodes (first is closest).
         """
 
         # Here torch.norm() is used to calculate the euclidean distance between the input and each node.
@@ -183,7 +178,7 @@ class Gng(torch.nn.Module):
 
     def _increment_ages(self, node):
         """
-        Increment the age of all edges connected to the given node (most likely the BMU).
+        Increment the age of all edges connected to the given node.
         Step 3 of the GNG algorithm.
 
         :param node: The index of the node whose edges' ages should be incremented.
@@ -197,17 +192,6 @@ class Gng(torch.nn.Module):
         # PyTorch's "advanced indexing" allows us to use whole arrays as indices.
         self._edges[node, connected_edges] += 1
         self._edges[connected_edges, node] += 1
-
-
-    def _squared_error(self, node, distance):
-        """
-        Add the square of the given distance to the given node's local error.
-        Step 4 of the GNG algorithm.
-
-        :param node: The index of the node whose local error should be incremented.
-        :param distance: The distance between the given node and the input signal.
-        """
-        self._local_error[node] += distance ** 2
 
 
     def _move_nodes(self, node, image):
@@ -271,6 +255,7 @@ class Gng(torch.nn.Module):
         self._edges = self._edges[: , connected_nodes]
         self._edges = self._edges[connected_nodes, :]
 
+
     def _insert_node(self):
         """
         Create a new node between the node with the largest error and its neighbor with the largest error,
@@ -299,7 +284,6 @@ class Gng(torch.nn.Module):
         # Add row the labels tensor.
         self._labels = torch.cat((self._labels, torch.zeros(1, 10, device=self.device)))
         
-
         # Multiply their errors by alpha.
         self._local_error[largest_error_node] *= self._a
         self._local_error[connected_nodes[largest_error_neighbor]] *= self._a
