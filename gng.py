@@ -6,6 +6,7 @@ import torch
 
 ################################### MODEL ##################################
 
+
 class Gng(torch.nn.Module):
     def __init__(self, e_b, e_n, a_max, l, a, d, passes, input_dim, max_nodes, device="cpu"):   
         """
@@ -133,7 +134,8 @@ class Gng(torch.nn.Module):
         # Core algorithm
         # Step 1: Generate an input signal
         for i, image in enumerate(images):
-            if self._inputs_count % 10000 == 0: print(f"Processed {self._inputs_count} inputs | {self._nodes.shape[0]} nodes")
+            if self._inputs_count % 10000 == 0:
+                print(f"Processed {self._inputs_count} inputs | {self._nodes.shape[0]} nodes")
             # Step 2: Find the two nodes closest to the input signal (& increment label count for the node)
             bmu, second_closest = self._get_closest(image, 2)
             self._labels[bmu][labels[i]] += 1
@@ -275,7 +277,8 @@ class Gng(torch.nn.Module):
         # Create a new node between them
         # We first have to create an empty tensor with the correct size, then fill it with the values we want.
         self._nodes = torch.cat((self._nodes, torch.zeros(1, self._input_dim, device=self.device)))
-        self._nodes[self._nodes.shape[0] - 1] = (self._nodes[largest_error_node] + self._nodes[connected_nodes[largest_error_neighbor]]) / 2
+        self._nodes[self._nodes.shape[0] - 1] = (self._nodes[largest_error_node] 
+                                                 + self._nodes[connected_nodes[largest_error_neighbor]]) / 2
 
         # Same process for the error tensor.
         self._local_error = torch.cat((self._local_error, torch.zeros(1, device=self.device)))
