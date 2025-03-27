@@ -10,7 +10,7 @@ import torchvision
 # Every example I've seen uses those two values so I guess they work.
 transform = torchvision.transforms.Compose([
     torchvision.transforms.GaussianBlur(3),
-    torchvision.transforms.Resize((14, 14)),
+    #torchvision.transforms.Resize((14, 14)),
     torchvision.transforms.ToTensor(),
     torchvision.transforms.Normalize((0.1307,), (0.3081,))
 ])
@@ -26,6 +26,6 @@ training_dataloader = torch.utils.data.DataLoader(training_dataset, batch_size=1
 testing_dataloader = torch.utils.data.DataLoader(testing_dataset, batch_size=1000, shuffle=True)
 
 # Create the GNG model.
-model = gng.Gng(0.1, 0.03, 30, 70, 0.5, 0.995, 1, 14*14, 1000)
+model = gng.Gng(0.1, 0.03, 30, 40, 0.5, 0.995, 3, 28*28, 1700)
 model.train(training_dataloader, 10)
 model.test(testing_dataloader)

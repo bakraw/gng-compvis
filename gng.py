@@ -19,8 +19,9 @@ class Gng(torch.nn.Module):
         :param a: Error reduction factor applied to the new unit's neighbors
         :param passes: Number of passes over the training set (AKA epochs)
         :param input_dim: Dimensions of the input data (i.e. dimensions of the images)
-        :param max_nodes: Maximum number of nodes in the network.
-        :param device: Device to use for training ("cpu" or "cuda")
+        :param max_nodes: Maximum number of nodes in the network
+        :param device: Device to use for training 
+                        ("cpu" or "cuda" ; I recommend CPU for < 1000 nodes, CUDA for > 1000 nodes)
         """
 
         super().__init__()
@@ -36,8 +37,8 @@ class Gng(torch.nn.Module):
         self._max_nodes = max_nodes
         self.device = device
 
-        print(f"\033[93m🛈 Initializing GNG on the CPU (recommended).\033[0m" if self.device=="cpu" 
-            else f"\033[93m🛈 Initializing GNG on the GPU (not recommended).\033[0m")
+        print(f"\033[93m🛈 Initializing GNG on the CPU.\033[0m" if self.device=="cpu" 
+            else f"\033[93m🛈 Initializing GNG on the GPU.\033[0m")
         
         # Disable gradient calculation, which is not needed for a GNG.
         torch.set_grad_enabled(True)
@@ -70,16 +71,23 @@ class Gng(torch.nn.Module):
         :param class_count: The number of classes in the dataset.
         """
 
-        # The labels tensor is a 2D tensor (nodes x classes) which counts how many
-        # times a node has been the BMU for a given class.
-        self._labels = torch.zeros(self._nodes.shape[0], class_count, device=self.device)
-
+        print("\033[94m⏲ Training...\033[0m")
         for epoch in range(self._passes):
             print(f"\033[94mEpoch {epoch + 1} / {self._passes}\033[0m")
             for i, (images, labels) in enumerate(data_loader):
                 self.forward((images, labels))
         
         print("\033[92m✓ Training complete.\033[0m")
+
+        # The labels tensor is a 2D tensor (nodes x classes) which counts how many
+        # times a node has been the BMU for a given class.
+        self._labels = torch.zeros(self._nodes.shape[0], class_count, device=self.device)
+
+        # Iterate through the data loader a second time to assign labels to the nodes.
+        print("\033[94m⏲ Assigning labels to nodes...\033[0m")
+        for i, (images, labels) in enumerate(data_loader):
+            self._assign_labels((images, labels))
+        print(f"\033[92m✓ Labels assigned to {self._nodes.shape[0]} nodes.\033[0m")
 
 
     def test(self, data_loader):
@@ -91,7 +99,14 @@ class Gng(torch.nn.Module):
 
         total = 0
         total_correct = 0
+
+        print("\033[94m⏲ Testing...\033[0m")
         for _, (images, labels) in enumerate(data_loader):
+
+            # Move the data to the device.
+            images = images.to(self.device)
+            labels = labels.to(self.device)
+
             for i, image in enumerate(images):
                 total += 1
 
@@ -138,7 +153,6 @@ class Gng(torch.nn.Module):
                 print(f"Processed {self._inputs_count} inputs | {self._nodes.shape[0]} nodes")
             # Step 2: Find the two nodes closest to the input signal (& increment label count for the node)
             bmu, second_closest = self._get_closest(image, 2)
-            self._labels[bmu][labels[i]] += 1
             # Step 3: Increment the age of all edges connected to the BMU
             self._increment_ages(bmu)
             # Step 4: Increase the BMU's local error by the squared distance between the BMU and the input signal
@@ -251,7 +265,7 @@ class Gng(torch.nn.Module):
         # We also need to update the local error tensor and the labels tensor.
         self._nodes = self._nodes[connected_nodes]
         self._local_error = self._local_error[connected_nodes]
-        self._labels = self._labels[connected_nodes]
+        #self._labels = self._labels[connected_nodes]
 
         # Update the adjacency matrix.
         self._edges = self._edges[: , connected_nodes]
@@ -285,7 +299,7 @@ class Gng(torch.nn.Module):
         self._local_error[self._local_error.shape[0] - 1] = self._local_error[largest_error_node]
 
         # Add row the labels tensor.
-        self._labels = torch.cat((self._labels, torch.zeros(1, 10, device=self.device)))
+        #self._labels = torch.cat((self._labels, torch.zeros(1, 10, device=self.device)))
         
         # Multiply their errors by alpha.
         self._local_error[largest_error_node] *= self._a
@@ -303,3 +317,26 @@ class Gng(torch.nn.Module):
         # Remove the edge between the two nodes with the largest error.
         self._edges[largest_error_node, largest_error_neighbor] = 0
         self._edges[largest_error_neighbor, largest_error_node] = 0
+
+    
+    def _assign_labels(self, data):
+        """
+        Assign labels to the nodes based on the labels of the given images.
+
+        :param data: A tuple containing an image batch and a label batch.
+        """
+
+        images, labels = data
+
+        images = images.to(self.device)
+        labels = labels.to(self.device)
+
+        for i, image in enumerate(images):
+            closest_nodes = self._get_closest(image, 5)
+            self._labels[closest_nodes[0], labels[i]] += 3
+            self._labels[closest_nodes[0:], labels[i]] += 1
+
+
+
+
+
