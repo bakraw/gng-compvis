@@ -102,7 +102,6 @@ class Gng(torch.nn.Module):
 
         print("\033[94m⏲ Testing...\033[0m")
         for _, (images, labels) in enumerate(data_loader):
-
             # Move the data to the device.
             images = images.to(self.device)
             labels = labels.to(self.device)
@@ -121,6 +120,76 @@ class Gng(torch.nn.Module):
                     print(f"Tested {total} images | Accuracy: {total_correct / total * 100:.2f}%")
         
         print(f"\033[92m✓ Test complete. Accuracy: {total_correct / total * 100:.2f}%\033[0m")
+
+
+    def visualize(self, save_path=None, third_dim=True):
+        """
+        ***IMPORTS MATPLOTLIB*** - Make sure to have it installed before running this function.
+
+        Visualize the graph. 
+
+        Uses Principal Component Analysis (PCA) to project the nodes onto a 2D plane,
+        then draws the edges "on top" of that.
+
+        :param save_path: Path to save the image to. If None, the image will only be displayed.
+        :param third_dim: If set to True (default), the nodes will be projected onto a 3D space
+                        (in 3D, PCA uses 3 principal components, leading to slightly more accurate results).
+        """
+
+        import matplotlib.pyplot
+        #import mpl_toolkits.mplot3d
+        
+        # Perform PCA
+        # U -> principal components, S -> singular values, V -> projection matrix
+        # We only need to use the first two columns of the projection matrix on the nodes.
+        (U, S, V) = torch.pca_lowrank(self._nodes)
+        if not third_dim: projected_nodes = torch.matmul(self._nodes, V[:, :2]) * 2
+        else: projected_nodes = torch.matmul(self._nodes, V[:, :3]) * 2
+
+        # Prepare the data for matplotlib
+        projected_nodes = projected_nodes.detach().cpu().numpy()
+        colors = [self._labels[i].argmax().item() for i in range(self._nodes.shape[0])]
+        edges = self._edges.detach().cpu().numpy()
+
+        # Canvas setup
+        matplotlib.pyplot.figure(figsize=(12, 12))
+
+        # Plot the nodes
+        if not third_dim:
+            matplotlib.pyplot.scatter(projected_nodes[:, 0], projected_nodes[:, 1], s=0.7, c=colors, cmap='tab10')
+        else: 
+            ax = matplotlib.pyplot.axes(projection='3d')
+            ax.scatter3D(projected_nodes[:, 0], projected_nodes[:, 1], projected_nodes[:, 2], s=0.7, c=colors, cmap='tab10')
+
+        # Plot the edges
+        
+        for i in range(edges.shape[0]):
+            for j in range(edges.shape[1]):
+                if edges[i, j] > 0:
+                    if not third_dim:
+                        matplotlib.pyplot.plot([projected_nodes[i, 0], projected_nodes[j, 0]],
+                                            [projected_nodes[i, 1], projected_nodes[j, 1]],
+                                            c='gray', alpha=0.1, linewidth=0.1)
+                    else:
+                        ax.plot([projected_nodes[i, 0], projected_nodes[j, 0]],
+                                [projected_nodes[i, 1], projected_nodes[j, 1]],
+                                [projected_nodes[i, 2], projected_nodes[j, 2]],
+                                c='gray', alpha=0.1, linewidth=0.1)
+
+        # Title and labels                
+        matplotlib.pyplot.title(f"GNG 2D Visualization - {self._nodes.shape[0]} nodes")
+        matplotlib.pyplot.xlabel("Principal Component 1")
+        matplotlib.pyplot.ylabel("Principal Component 2")
+        if third_dim:
+            ax.set_zlabel("Principal Component 3")
+
+        # Save and show the plot
+        if save_path is not None:
+            matplotlib.pyplot.savefig(save_path)
+            print(f"\033[92m✓ Visualization saved to {save_path}.\033[0m")
+        matplotlib.pyplot.show()
+
+
 
 
     #----------- PRIVATE METHODS -----------#
@@ -256,16 +325,14 @@ class Gng(torch.nn.Module):
         # Get the indices of all edges older than the maximum age and remove them.
         old_edges = torch.nonzero(input=self._edges > self._a_max, as_tuple=True)
         self._edges[old_edges] = 0
-
-        # Get the indices of all nodes with no connected neighbors and remove them. 
-        # We first get the indices of all nodes with at least one connected neighbor by summing the adjacency matrix.
+ 
+        # Get the indices of all nodes with at least one connected neighbor by summing the adjacency matrix.
         connected_nodes = torch.nonzero(torch.sum(self._edges, dim=1), as_tuple=True)[0]
 
         # Remove the nodes with no connected neighbors.
         # We also need to update the local error tensor and the labels tensor.
         self._nodes = self._nodes[connected_nodes]
         self._local_error = self._local_error[connected_nodes]
-        #self._labels = self._labels[connected_nodes]
 
         # Update the adjacency matrix.
         self._edges = self._edges[: , connected_nodes]
@@ -298,10 +365,7 @@ class Gng(torch.nn.Module):
         self._local_error = torch.cat((self._local_error, torch.zeros(1, device=self.device)))
         self._local_error[self._local_error.shape[0] - 1] = self._local_error[largest_error_node]
 
-        # Add row the labels tensor.
-        #self._labels = torch.cat((self._labels, torch.zeros(1, 10, device=self.device)))
-        
-        # Multiply their errors by alpha.
+         # Multiply their errors by alpha.
         self._local_error[largest_error_node] *= self._a
         self._local_error[connected_nodes[largest_error_neighbor]] *= self._a
 
@@ -335,8 +399,3 @@ class Gng(torch.nn.Module):
             closest_nodes = self._get_closest(image, 5)
             self._labels[closest_nodes[0], labels[i]] += 3
             self._labels[closest_nodes[0:], labels[i]] += 1
-
-
-
-
-

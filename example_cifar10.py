@@ -5,6 +5,7 @@ import gng
 transform = torchvision.transforms.Compose([
     torchvision.transforms.ToTensor(),
     torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    torchvision.transforms.ColorJitter(saturation=1.5)
 ])
 
 training_dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
