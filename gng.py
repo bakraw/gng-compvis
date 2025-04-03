@@ -8,17 +8,17 @@ import torch
 
 
 class Gng(torch.nn.Module):
-    def __init__(self, e_b, e_n, a_max, l, a, d, passes, input_dim, max_nodes, device="cpu"):   
+    def __init__(self, input_dim, e_b=0.02, e_n=0.06, a_max=50, l=40, a=0.5, d=0.995, passes=2, max_nodes=5000, device="cuda"):   
         """
         Constructor for the GNG class.
 
+        :param input_dim: Dimensions of the input data (i.e. dimensions of the images)
         :param e_b: Learning rate for the best matching unit
         :param e_n: Learning rate for the neighbors of the BMU
         :param a_max: Maximum age of a node before it gets removed
         :param l: Number of inputs before a new node is created
         :param a: Error reduction factor applied to the new unit's neighbors
         :param passes: Number of passes over the training set (AKA epochs)
-        :param input_dim: Dimensions of the input data (i.e. dimensions of the images)
         :param max_nodes: Maximum number of nodes in the network
         :param device: Device to use for training 
                         ("cpu" or "cuda" ; I recommend CPU for < 1000 nodes, CUDA for > 1000 nodes)
@@ -35,24 +35,24 @@ class Gng(torch.nn.Module):
         self._passes = passes
         self._input_dim = input_dim
         self._max_nodes = max_nodes
-        self.device = device
+        self._device = device
 
-        print(f"\033[93m🛈 Initializing GNG on the CPU.\033[0m" if self.device=="cpu" 
+        print(f"\033[93m🛈 Initializing GNG on the CPU.\033[0m" if self._device=="cpu" 
             else f"\033[93m🛈 Initializing GNG on the GPU.\033[0m")
         
         # Disable gradient calculation, which is not needed for a GNG.
-        torch.set_grad_enabled(True)
+        torch.set_grad_enabled(False)
         
         # Initialize the first two nodes with random values.
         # We register the attributes as buffers, so that they are saved when we save the model.
         # We can access them like any other attribute (i.e. self._nodes).
-        self.register_buffer('_nodes', torch.randn(2, input_dim, device=self.device))
-        self.register_buffer('_local_error', torch.zeros(2, device=self.device))
+        self.register_buffer('_nodes', torch.randn(2, input_dim, device=self._device))
+        self.register_buffer('_local_error', torch.zeros(2, device=self._device))
 
         # Edges are represented as an adjacency matrix, where each entry is the age of the edge (0 if no edge).
         # It is initialized at maximum size, which is a bit wasteful but avoids having to dynamically 
         # "resize" it later on (i.e. recreating the entire matrix).
-        self.register_buffer('_edges', torch.zeros(2, 2, device=self.device))
+        self.register_buffer('_edges', torch.zeros(2, 2, device=self._device))
 
         # Create an edge between the first two nodes.
         self._connect_nodes(0, 1)
@@ -81,7 +81,7 @@ class Gng(torch.nn.Module):
 
         # The labels tensor is a 2D tensor (nodes x classes) which counts how many
         # times a node has been the BMU for a given class.
-        self._labels = torch.zeros(self._nodes.shape[0], class_count, device=self.device)
+        self._labels = torch.zeros(self._nodes.shape[0], class_count, device=self._device)
 
         # Iterate through the data loader a second time to assign labels to the nodes.
         print("\033[94m⏲ Assigning labels to nodes...\033[0m")
@@ -103,8 +103,8 @@ class Gng(torch.nn.Module):
         print("\033[94m⏲ Testing...\033[0m")
         for _, (images, labels) in enumerate(data_loader):
             # Move the data to the device.
-            images = images.to(self.device)
-            labels = labels.to(self.device)
+            images = images.to(self._device)
+            labels = labels.to(self._device)
 
             for i, image in enumerate(images):
                 total += 1
@@ -120,77 +120,7 @@ class Gng(torch.nn.Module):
                     print(f"Tested {total} images | Accuracy: {total_correct / total * 100:.2f}%")
         
         print(f"\033[92m✓ Test complete. Accuracy: {total_correct / total * 100:.2f}%\033[0m")
-
-
-    def visualize(self, save_path=None, third_dim=True):
-        """
-        ***IMPORTS MATPLOTLIB*** - Make sure to have it installed before running this function.
-
-        Visualize the graph. 
-
-        Uses Principal Component Analysis (PCA) to project the nodes onto a 2D plane,
-        then draws the edges "on top" of that.
-
-        :param save_path: Path to save the image to. If None, the image will only be displayed.
-        :param third_dim: If set to True (default), the nodes will be projected onto a 3D space
-                        (in 3D, PCA uses 3 principal components, leading to slightly more accurate results).
-        """
-
-        import matplotlib.pyplot
-        #import mpl_toolkits.mplot3d
         
-        # Perform PCA
-        # U -> principal components, S -> singular values, V -> projection matrix
-        # We only need to use the first two columns of the projection matrix on the nodes.
-        (U, S, V) = torch.pca_lowrank(self._nodes)
-        if not third_dim: projected_nodes = torch.matmul(self._nodes, V[:, :2]) * 2
-        else: projected_nodes = torch.matmul(self._nodes, V[:, :3]) * 2
-
-        # Prepare the data for matplotlib
-        projected_nodes = projected_nodes.detach().cpu().numpy()
-        colors = [self._labels[i].argmax().item() for i in range(self._nodes.shape[0])]
-        edges = self._edges.detach().cpu().numpy()
-
-        # Canvas setup
-        matplotlib.pyplot.figure(figsize=(12, 12))
-
-        # Plot the nodes
-        if not third_dim:
-            matplotlib.pyplot.scatter(projected_nodes[:, 0], projected_nodes[:, 1], s=0.7, c=colors, cmap='tab10')
-        else: 
-            ax = matplotlib.pyplot.axes(projection='3d')
-            ax.scatter3D(projected_nodes[:, 0], projected_nodes[:, 1], projected_nodes[:, 2], s=0.7, c=colors, cmap='tab10')
-
-        # Plot the edges
-        
-        for i in range(edges.shape[0]):
-            for j in range(edges.shape[1]):
-                if edges[i, j] > 0:
-                    if not third_dim:
-                        matplotlib.pyplot.plot([projected_nodes[i, 0], projected_nodes[j, 0]],
-                                            [projected_nodes[i, 1], projected_nodes[j, 1]],
-                                            c='gray', alpha=0.1, linewidth=0.1)
-                    else:
-                        ax.plot([projected_nodes[i, 0], projected_nodes[j, 0]],
-                                [projected_nodes[i, 1], projected_nodes[j, 1]],
-                                [projected_nodes[i, 2], projected_nodes[j, 2]],
-                                c='gray', alpha=0.1, linewidth=0.1)
-
-        # Title and labels                
-        matplotlib.pyplot.title(f"GNG 2D Visualization - {self._nodes.shape[0]} nodes")
-        matplotlib.pyplot.xlabel("Principal Component 1")
-        matplotlib.pyplot.ylabel("Principal Component 2")
-        if third_dim:
-            ax.set_zlabel("Principal Component 3")
-
-        # Save and show the plot
-        if save_path is not None:
-            matplotlib.pyplot.savefig(save_path)
-            print(f"\033[92m✓ Visualization saved to {save_path}.\033[0m")
-        matplotlib.pyplot.show()
-
-
-
 
     #----------- PRIVATE METHODS -----------#
 
@@ -212,8 +142,8 @@ class Gng(torch.nn.Module):
         images, labels = data
 
         # Move the data to the device.
-        images = images.to(self.device)
-        labels = labels.to(self.device)
+        images = images.to(self._device)
+        labels = labels.to(self._device)
 
         # Core algorithm
         # Step 1: Generate an input signal
@@ -303,7 +233,7 @@ class Gng(torch.nn.Module):
 
     def _connect_nodes(self, node_a, node_b):
         """
-        Connect two nodes with an edge (most likely the BMU and the second closest node).
+        Connect two nodes with an edge.
         Alternatively, reset its age if it already exists.
         Step 6 of the GNG algorithm.
 
@@ -357,12 +287,12 @@ class Gng(torch.nn.Module):
 
         # Create a new node between them
         # We first have to create an empty tensor with the correct size, then fill it with the values we want.
-        self._nodes = torch.cat((self._nodes, torch.zeros(1, self._input_dim, device=self.device)))
+        self._nodes = torch.cat((self._nodes, torch.zeros(1, self._input_dim, device=self._device)))
         self._nodes[self._nodes.shape[0] - 1] = (self._nodes[largest_error_node] 
                                                  + self._nodes[connected_nodes[largest_error_neighbor]]) / 2
 
         # Same process for the error tensor.
-        self._local_error = torch.cat((self._local_error, torch.zeros(1, device=self.device)))
+        self._local_error = torch.cat((self._local_error, torch.zeros(1, device=self._device)))
         self._local_error[self._local_error.shape[0] - 1] = self._local_error[largest_error_node]
 
          # Multiply their errors by alpha.
@@ -370,8 +300,8 @@ class Gng(torch.nn.Module):
         self._local_error[connected_nodes[largest_error_neighbor]] *= self._a
 
         # Add row and column to the adjacency matrix.
-        self._edges = torch.cat((self._edges, torch.zeros(self._edges.shape[0], 1, device=self.device)), dim=1)
-        self._edges = torch.cat((self._edges, torch.zeros(1, self._edges.shape[1], device=self.device)), dim=0)
+        self._edges = torch.cat((self._edges, torch.zeros(self._edges.shape[0], 1, device=self._device)), dim=1)
+        self._edges = torch.cat((self._edges, torch.zeros(1, self._edges.shape[1], device=self._device)), dim=0)
 
         # Connect the new node to the two nodes with the largest error.
         new_node = self._nodes.shape[0] - 1
@@ -386,16 +316,18 @@ class Gng(torch.nn.Module):
     def _assign_labels(self, data):
         """
         Assign labels to the nodes based on the labels of the given images.
+        
+        Currently inefficient as hell but I'm too lazy to implement some kind of batch processing.
 
         :param data: A tuple containing an image batch and a label batch.
         """
 
         images, labels = data
 
-        images = images.to(self.device)
-        labels = labels.to(self.device)
+        images = images.to(self._device)
+        labels = labels.to(self._device)
 
         for i, image in enumerate(images):
-            closest_nodes = self._get_closest(image, 5)
+            closest_nodes = self._get_closest(image, 4)
             self._labels[closest_nodes[0], labels[i]] += 3
             self._labels[closest_nodes[0:], labels[i]] += 1

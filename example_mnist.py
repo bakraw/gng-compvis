@@ -1,5 +1,5 @@
 import gng
-import lmds
+import visualization
 import torch
 import torchvision
 
@@ -27,7 +27,13 @@ training_dataloader = torch.utils.data.DataLoader(training_dataset, batch_size=1
 testing_dataloader = torch.utils.data.DataLoader(testing_dataset, batch_size=1000, shuffle=True)
 
 # Create the GNG model.
-model = gng.Gng(0.1, 0.03, 30, 40, 0.5, 0.995, 1, 14*14, 1000)
+model = gng.Gng(14*14, 0.1, 0.03, 30, 40, 0.5, 0.995, 1,  100, "cpu")
 model.train(training_dataloader, class_count=10)
 model.test(testing_dataloader)
-model.visualize("gng_2d.png")
+
+# Visualization.
+visualization = visualization.Visualization(model)
+visualization.pca("test_pca.png", third_dim=True)
+visualization.mds("test_mds.png", third_dim=False)
+visualization.tsne("test_tsne.png", third_dim=False)
+visualization.umap("test_umap.png", third_dim=True)
