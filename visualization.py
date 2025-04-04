@@ -68,15 +68,12 @@ class Visualization:
         projected_nodes = torch.matmul(self._nodes,
                                       V[:, :3] if third_dim else V[:, :2]) * 2
 
-        # Prepare the data for plotting
-        projected_nodes = projected_nodes.detach().cpu().numpy()
-
         self._plot(save_path, third_dim, projected_nodes,
                     ("1st principal component", "2nd principal component", "3rd principal component") if third_dim 
                     else ("1st principal component", "2nd principal component"), "PCA")
         
 
-    def mds(self, save_path=None, third_dim=True):
+    def mds(self, save_path=None, third_dim=True, precision=0.2):
         """
         Perform MDS to project the nodes onto a 2D plane or 3D space.
 
@@ -87,9 +84,14 @@ class Visualization:
         print("\033[94m⏲ Performing MDS (3D)...\033[0m" if third_dim
               else "\033[94m⏲ Performing MDS (2D)...\033[0m")
         
+        # Pre-compute the distance matrix
+        distance_matrix = torch.cdist(self._nodes, self._nodes)
+        distance_matrix = distance_matrix.detach().cpu().numpy()
+
         # Perform MDS
-        nodes = self._nodes.detach().cpu().numpy()
-        projected_nodes = sklearn.manifold.MDS(n_components=2 if not third_dim else 3).fit_transform(nodes)
+        projected_nodes = torch.Tensor(sklearn.manifold.MDS(n_components=2 if not third_dim else 3,
+                                                            metric=True,
+                                                            dissimilarity="precomputed").fit_transform(distance_matrix))
 
         # Plot the results.
         self._plot(save_path, third_dim, projected_nodes,
@@ -109,7 +111,7 @@ class Visualization:
         
         # Perform t-SNE.
         nodes = self._nodes.detach().cpu().numpy()
-        projected_nodes = sklearn.manifold.TSNE(n_components=2 if not third_dim else 3).fit_transform(nodes)
+        projected_nodes = torch.Tensor(sklearn.manifold.TSNE(n_components=2 if not third_dim else 3).fit_transform(nodes))
 
         # Plot the results.
         self._plot(save_path, third_dim, projected_nodes,
@@ -132,7 +134,8 @@ class Visualization:
         # Perform UMAP.
         # Metric can be changed if necessary.
         nodes = self._nodes.detach().cpu().numpy()
-        projected_nodes = umap.UMAP(n_components=2 if not third_dim else 3, metric="euclidean").fit_transform(nodes)
+        projected_nodes = torch.Tensor(umap.UMAP(n_components=2 if not third_dim else 3,
+                                                 metric="euclidean").fit_transform(nodes))
 
         # Plot the results.
         self._plot(save_path, third_dim, projected_nodes,
@@ -166,12 +169,17 @@ class Visualization:
             ax.scatter3D(projected_nodes[:, 0], projected_nodes[:, 1], projected_nodes[:, 2],
                          s=self._node_size, c=self._colors, cmap='tab10')
 
-        # Plot the edges
-        # Using a line collection for batch drawing (drawing the edges one by one is atrociously slow)
-        edges = [(projected_nodes[i], projected_nodes[j]) for i in range(self._edges.shape[0])
-                                                          for j in range(self._edges.shape[1]) 
-                                                          if self._edges[i, j] > 0]
-        
+        # Get indices where edges exist
+        # Move edge_indices to CPU
+        edge_indices = torch.nonzero(self._edges, as_tuple=True)
+
+        # Create edge pairs.
+        edges = torch.stack([projected_nodes[edge_indices[0]], projected_nodes[edge_indices[1]]])
+
+        # Convert to numpy array for matplotlib.
+        edges = edges.detach().cpu().numpy().transpose(1, 0, 2)
+
+        # Using a line collection for batch drawing (drawing the edges one by one is atrociously slow).
         if third_dim:
             line_collection = mpl_toolkits.mplot3d.art3d.Line3DCollection(edges,
                                                                           linewidths=self._edge_width,
