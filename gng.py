@@ -8,7 +8,7 @@ import torch
 
 
 class Gng(torch.nn.Module):
-    def __init__(self, input_dim, e_b=0.02, e_n=0.06, a_max=50, l=40, a=0.5, d=0.995, passes=2, max_nodes=5000, device="cuda"):   
+    def __init__(self, input_dim=1, e_b=0.02, e_n=0.06, a_max=50, l=40, a=0.5, d=0.995, passes=2, max_nodes=5000, device="cpu"):   
         """
         Constructor for the GNG class.
 
@@ -50,8 +50,6 @@ class Gng(torch.nn.Module):
         self.register_buffer('_local_error', torch.zeros(2, device=self._device))
 
         # Edges are represented as an adjacency matrix, where each entry is the age of the edge (0 if no edge).
-        # It is initialized at maximum size, which is a bit wasteful but avoids having to dynamically 
-        # "resize" it later on (i.e. recreating the entire matrix).
         self.register_buffer('_edges', torch.zeros(2, 2, device=self._device))
 
         # Create an edge between the first two nodes.
@@ -81,7 +79,7 @@ class Gng(torch.nn.Module):
 
         # The labels tensor is a 2D tensor (nodes x classes) which counts how many
         # times a node has been the BMU for a given class.
-        self._labels = torch.zeros(self._nodes.shape[0], class_count, device=self._device)
+        self.register_buffer('_labels', torch.zeros(self._nodes.shape[0], class_count, device=self._device))
 
         # Iterate through the data loader a second time to assign labels to the nodes.
         print("\033[94m⏲ Assigning labels to nodes...\033[0m")
@@ -120,7 +118,39 @@ class Gng(torch.nn.Module):
                     print(f"Tested {total} images | Accuracy: {total_correct / total * 100:.2f}%")
         
         print(f"\033[92m✓ Test complete. Accuracy: {total_correct / total * 100:.2f}%\033[0m")
+
+
+    def load(self, path):
+        """
+        Load a pre-trained GNG from a ```.pth``` file.
+
+        :param path: The path to the file to load.
+        """
+
+        print("\033[94m⏲ Loading model from {path}...\033[0m")
+
+        # Load the state dictionary.
+        loaded_model = torch.load(path, map_location=self._device)
+
+        # Get the size of the loaded tensors.
+        nodes_size = loaded_model['_nodes'].size()
+        edges_size = loaded_model['_edges'].size()
+        local_error_size = loaded_model['_local_error'].size()
+        labels_size = loaded_model['_labels'].size()
         
+        # Resize the tensors to match the loaded sizes.
+        # self._labels has to be registered as a buffer as it doesn't exist before training.
+        self._nodes = torch.zeros(nodes_size, device=self._device)
+        self._edges = torch.zeros(edges_size, device=self._device)
+        self._local_error = torch.zeros(local_error_size, device=self._device)
+        self.register_buffer('_labels', 
+                             torch.zeros(labels_size, device=self._device))
+
+        # Load the state dictionary.
+        self.load_state_dict(loaded_model)
+
+        print("\033[92m✓ Model loaded.\033[0m")
+
 
     #----------- PRIVATE METHODS -----------#
 
@@ -316,7 +346,7 @@ class Gng(torch.nn.Module):
     def _assign_labels(self, data):
         """
         Assign labels to the nodes based on the labels of the given images.
-        
+
         Currently inefficient as hell but I'm too lazy to implement some kind of batch processing.
 
         :param data: A tuple containing an image batch and a label batch.
