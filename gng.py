@@ -18,6 +18,7 @@ class Gng(torch.nn.Module):
         :param a_max: Maximum age of a node before it gets removed
         :param l: Number of inputs before a new node is created
         :param a: Error reduction factor applied to the new unit's neighbors
+        :param d: Error reduction factor applied to all nodes
         :param passes: Number of passes over the training set (AKA epochs)
         :param max_nodes: Maximum number of nodes in the network
         :param device: Device to use for training 
@@ -79,7 +80,8 @@ class Gng(torch.nn.Module):
 
         # The labels tensor is a 2D tensor (nodes x classes) which counts how many
         # times a node has been the BMU for a given class.
-        self.register_buffer('_labels', torch.zeros(self._nodes.shape[0], class_count, device=self._device))
+        self.register_buffer('_labels',
+                             torch.zeros(self._nodes.shape[0], class_count, device=self._device))
 
         # Iterate through the data loader a second time to assign labels to the nodes.
         print("\033[94m⏲ Assigning labels to nodes...\033[0m")
@@ -92,11 +94,19 @@ class Gng(torch.nn.Module):
         """
         Test the network on the given data.
 
+        Flat accuracy is a simple correct / total accuracy.
+        Weighted accuracy takes certainty into account. Since incorrect predictions
+        usually have lower certainty, weighted accuracy tends to be higher than flat accuracy.
+
         :param data_loader: A PyTorch DataLoader object.
+        :return: The flat accuracy of the network as a float between 0 and 1.
         """
 
         total = 0
+        weighted_total = 0
         total_correct = 0
+        weighted_total_correct = 0
+        total_certainty = 0
 
         print("\033[94m⏲ Testing...\033[0m")
         for _, (images, labels) in enumerate(data_loader):
@@ -108,16 +118,33 @@ class Gng(torch.nn.Module):
                 total += 1
 
                 closest_node = self._get_closest(image, 1)
+                closest_labels = self._labels[closest_node]
+                #print(closest_labels)
 
                 # Prediction (i.e. label that has activated the closest node the most).
-                predicted_label = self._labels[closest_node].argmax().item()
+                predicted_label = closest_labels.argmax().item()
+                certainty =  closest_labels.max().item() / (closest_labels.sum().item() 
+                                                            if closest_labels.sum().item() != 0 else 9999)
+                weighted_total += certainty
+                total_certainty += certainty
+
                 actual_label = labels[i].item()
-                if predicted_label == actual_label: total_correct += 1
+                if predicted_label == actual_label:
+                    total_correct += 1
+                    weighted_total_correct += certainty
+                #     print(f"\033[92m✓ Correct: {predicted_label} ({certainty * 100:.2f}%)\033[0m")
+                # else: print(f"\033[91m✗ Incorrect: {predicted_label} ({certainty * 100:.2f}%)\033[0m")
 
                 if total % 1000 == 0:
-                    print(f"Tested {total} images | Accuracy: {total_correct / total * 100:.2f}%")
+                    print(f"Tested {total} images | "
+                          f"Accuracy: {total_correct / total * 100:.2f}%")
         
-        print(f"\033[92m✓ Test complete. Accuracy: {total_correct / total * 100:.2f}%\033[0m")
+        print(f"\033[92m✓ Test complete.\n-> "
+              f"Flat accuracy: {total_correct / total * 100:.2f}% | "
+              f"Weighted accuracy: {weighted_total_correct / weighted_total * 100:.2f}% | "
+              f"Average certainty: {total_certainty / total * 100:.2f}%\033[0m")
+        
+        return total_correct / total
 
 
     def load(self, path):
