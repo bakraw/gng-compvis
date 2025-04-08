@@ -86,12 +86,34 @@ class Visualization:
         
         # Pre-compute the distance matrix
         distance_matrix = torch.cdist(self._nodes, self._nodes)
+
+        # Landmark selection
+        if precision < 1:
+            num_landmarks = int(self._nodes.shape[0] * precision)
+            landmarks = torch.zeros(num_landmarks, dtype=torch.long)
+
+            # Select the point that is farthest from all other points.
+            landmarks[0] =  torch.argmax(distance_matrix.sum(axis=1))
+
+            for i in range(1, num_landmarks):
+                # Compute minimum distance from all landmarks
+                min_distances = torch.min(distance_matrix[landmarks[:i], :], dim=0)[0]
+                # Add the point furthest from all landmarks.
+                landmarks[i] = torch.argmax(min_distances)
+
+                reduced_matrix = distance_matrix[landmarks, :]
+                reduced_matrix = reduced_matrix[:, landmarks]
+
+                reduced_matrix = reduced_matrix.detach().cpu().numpy()
+
+                
+        
         distance_matrix = distance_matrix.detach().cpu().numpy()
 
         # Perform MDS
         projected_nodes = torch.Tensor(sklearn.manifold.MDS(n_components=2 if not third_dim else 3,
                                                             metric=True,
-                                                            dissimilarity="precomputed").fit_transform(distance_matrix))
+                                                            dissimilarity="precomputed").fit_transform(reduced_matrix if precision < 1 else distance_matrix))
 
         # Plot the results.
         self._plot(save_path, third_dim, projected_nodes,
@@ -162,21 +184,21 @@ class Visualization:
 
         # Plot the nodes
         if not third_dim:
-            matplotlib.pyplot.scatter(projected_nodes[:, 0], projected_nodes[:, 1],
+            matplotlib.pyplot.scatter(projected_nodes.cpu()[:, 0], projected_nodes.cpu()[:, 1],
                                       s=self._node_size, c=self._colors, cmap='tab10')
-        else: 
+        else:
             ax = matplotlib.pyplot.axes(projection='3d')
-            ax.scatter3D(projected_nodes[:, 0], projected_nodes[:, 1], projected_nodes[:, 2],
+            ax.scatter3D(projected_nodes.cpu()[:, 0], projected_nodes.cpu()[:, 1], projected_nodes.cpu()[:, 2],
                          s=self._node_size, c=self._colors, cmap='tab10')
 
         # Get indices where edges exist
-        # Move edge_indices to CPU
         edge_indices = torch.nonzero(self._edges, as_tuple=True)
 
         # Create edge pairs.
         edges = torch.stack([projected_nodes[edge_indices[0]], projected_nodes[edge_indices[1]]])
 
         # Convert to numpy array for matplotlib.
+        # We have to transpose from (2, num_edges, 2) to (num_edges, 2, 2).
         edges = edges.detach().cpu().numpy().transpose(1, 0, 2)
 
         # Using a line collection for batch drawing (drawing the edges one by one is atrociously slow).
@@ -185,19 +207,19 @@ class Visualization:
                                                                           linewidths=self._edge_width,
                                                                           color=("gray", self._edge_alpha))
             ax.add_collection(line_collection)
-        else: 
+        else:
             line_collection = matplotlib.collections.LineCollection(edges,
                                                                     linewidths=self._edge_width,
                                                                     color=("gray", self._edge_alpha))
             matplotlib.pyplot.gca().add_collection(line_collection)
 
-        # Title and labels                
-        matplotlib.pyplot.title(f"GNG 3D Visualization - {method} - {self._nodes.shape[0]} nodes" if third_dim 
+        # Title and labels
+        matplotlib.pyplot.title(f"GNG 3D Visualization - {method} - {self._nodes.shape[0]} nodes" if third_dim
                                 else f"GNG 2D Visualization - {method} - {self._nodes.shape[0]} nodes")
         matplotlib.pyplot.xlabel(labels[0])
         matplotlib.pyplot.ylabel(labels[1])
         if third_dim: ax.set_zlabel(labels[2])
-        
+
         # Legend
         unique_labels = list(set(self._colors))
         legend_elements = [matplotlib.pyplot.Line2D([0], [0], marker='o', color='w',
@@ -208,7 +230,7 @@ class Visualization:
                                 loc='center left', bbox_to_anchor=(1.1, 0.5))
         else: matplotlib.pyplot.legend(handles=legend_elements, title='Classes',
                                 loc='center left', bbox_to_anchor=(1, 0.5))
-        
+
         # Save and show the plot
         print("\033[92m✓ Visualization generated.\033[0m")
         if save_path is not None:
