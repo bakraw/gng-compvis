@@ -1,3 +1,8 @@
+"""
+Example of how Optuna can be used for hyperparameter optimization.
+Requires the optuna package (optuna-dashboard also recommended).
+"""
+
 import optuna
 import torch
 import torchvision
