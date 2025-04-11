@@ -4,14 +4,22 @@
 # - if you're on Colab, uncomment the line below.
 # %load_ext cuml.accel
 
+
+################################## IMPORTS ##################################
+
+
 import gng
 import umap
 import torch
+import scipy.sparse
 import sklearn.manifold
-import sklearn.decomposition
+import networkx
 import matplotlib.pyplot
 import matplotlib.collections
 import mpl_toolkits.mplot3d.art3d
+
+
+################################## CLASS ##################################
 
 
 class Visualization:
@@ -163,6 +171,33 @@ class Visualization:
         self._plot(save_path, third_dim, projected_nodes,
                    ("UMAP 1st component", "UMAP 2nd component", "UMAP 3rd component") if third_dim
                    else ("UMAP 1st component", "UMAP 2nd component"), "UMAP")
+        
+
+    def to_gexf(self, save_path=None):
+        """
+        Converts the graph to a GEXF file to be read by a graph visualization software.
+        """
+
+        graph = networkx.Graph()
+
+        
+        # Add nodes with their labels as attributes
+        for i in range(len(self._nodes)):
+            graph.add_node(i, class_label=str(self._labels[i].argmax().item()))    
+
+        # Add edges from the adjacency matrix.
+        # We invert the weights so that smaller age = stronger link.
+        # Here zip() returns a tuple of two lists, the first being the row indices
+        # and the second being the column indices.
+        edge_indices = torch.nonzero(self._edges, as_tuple=True)
+        for start, end in zip(*edge_indices):
+            weight = 1 / self._edges[start.item(), end.item()].item()
+            graph.add_edge(start.item(), end.item(), weight=weight)
+
+        # Save the graph if a path is provided
+        if save_path is not None:
+            networkx.write_gexf(graph, save_path)
+            print(f"\033[92m✓ Graph saved to {save_path}\033[0m")
 
 
     #----------- PRIVATE METHODS -----------#
@@ -185,11 +220,11 @@ class Visualization:
         # Plot the nodes
         if not third_dim:
             matplotlib.pyplot.scatter(projected_nodes.cpu()[:, 0], projected_nodes.cpu()[:, 1],
-                                      s=self._node_size, c=self._colors, cmap='tab10')
+                                      s=self._node_size, c=self._colors, cmap='tab10', zorder=2)
         else:
             ax = matplotlib.pyplot.axes(projection='3d')
             ax.scatter3D(projected_nodes.cpu()[:, 0], projected_nodes.cpu()[:, 1], projected_nodes.cpu()[:, 2],
-                         s=self._node_size, c=self._colors, cmap='tab10')
+                         s=self._node_size, c=self._colors, cmap='tab10', zorder=2)
 
         # Get indices where edges exist
         edge_indices = torch.nonzero(self._edges, as_tuple=True)
@@ -205,12 +240,14 @@ class Visualization:
         if third_dim:
             line_collection = mpl_toolkits.mplot3d.art3d.Line3DCollection(edges,
                                                                           linewidths=self._edge_width,
-                                                                          color=("gray", self._edge_alpha))
+                                                                          color=("gray", self._edge_alpha),
+                                                                          zorder=1)
             ax.add_collection(line_collection)
         else:
             line_collection = matplotlib.collections.LineCollection(edges,
                                                                     linewidths=self._edge_width,
-                                                                    color=("gray", self._edge_alpha))
+                                                                    color=("gray", self._edge_alpha),
+                                                                    zorder=1)
             matplotlib.pyplot.gca().add_collection(line_collection)
 
         # Title and labels
