@@ -37,29 +37,22 @@ def objective(trial):
     # Define the hyperparameters to optimize.
     params = {
         "e_b": trial.suggest_float("e_b", 0.001, 1),
-        "e_n": trial.suggest_float("e_n", 0.001, 1),
+        "e_n": trial.suggest_float("e_n", 0.001, 0.1),
         "a_max": trial.suggest_int("a_max", 5, 200),
         "l": trial.suggest_int("l", 5, 100),
         "a": trial.suggest_float("a", 0.01, 1.0),
         "d": trial.suggest_float("d", 0.01, 1.0),
-        "passes": trial.suggest_int("passes", 1, 20),
-        "max_nodes": trial.suggest_int("max_nodes", 100, 10000)
+        "passes": trial.suggest_int("passes", 1, 2),
+        "max_nodes": trial.suggest_int("max_nodes", 100, 1500)
     }    
 
     input_dim = 14*14
-
-    # Select device.
     device = "cpu" # if params["max_nodes"] < 1000 else "cuda"
 
-    # Create the model.
+    # Create the model, test it and return the measured accuracy.
     model = gng.Gng(input_dim=input_dim, **params, device=device)
-
-    # Train the model.
     model.train(training_dataloader, 10)
-
-    # Return the accuracy of the model on the testing set.
-    acc = model.test(testing_dataloader)
-    return acc
+    return model.test(testing_dataloader) 
 
 
 # Create the study and optimize the objective function.
