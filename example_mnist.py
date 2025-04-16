@@ -35,7 +35,7 @@ testing_dataloader = torch.utils.data.DataLoader(testing_dataset, batch_size=100
 
 # Create the GNG model.
 # To load a model, leave default class parameters, then use model.load("path/to/model.pth").
-model = gng.Gng(14*14, 0.05, 0.015, 30, 40, 0.5, 0.995, 1,  1000, "cpu")
+model = gng.Gng(14*14, 0.1, 0.015, 30, 40, 0.5, 0.995, 1,  1000, "cpu")
 model.train(training_dataloader, 10)
 torch.save(model.state_dict(), "gng.pth")
 _ = model.test(testing_dataloader)
@@ -46,4 +46,4 @@ visualization.pca("test_pca.png", third_dim=True)
 visualization.mds("test_mds.png", third_dim=False, precision=1)
 visualization.tsne("test_tsne.svg", third_dim=False)
 visualization.umap("test_umap.svg", third_dim=True)
-visualization.graph()
+visualization.to_gexf("test_graph.gexf")

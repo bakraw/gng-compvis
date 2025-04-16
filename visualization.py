@@ -11,7 +11,6 @@
 import gng
 import umap
 import torch
-import scipy.sparse
 import sklearn.manifold
 import networkx
 import matplotlib.pyplot
@@ -173,31 +172,30 @@ class Visualization:
                    else ("UMAP 1st component", "UMAP 2nd component"), "UMAP")
         
 
-    def to_gexf(self, save_path=None):
+    def to_gexf(self, save_path):
         """
         Converts the graph to a GEXF file to be read by a graph visualization software.
+
+        :param save_path: Path to save the GEXF file to.
         """
 
         graph = networkx.Graph()
 
-        
         # Add nodes with their labels as attributes
         for i in range(len(self._nodes)):
             graph.add_node(i, class_label=str(self._labels[i].argmax().item()))    
 
         # Add edges from the adjacency matrix.
         # We invert the weights so that smaller age = stronger link.
-        # Here zip() returns a tuple of two lists, the first being the row indices
-        # and the second being the column indices.
+        # Here zip() splits the indices into two lists (edge sources, edge destinations).
         edge_indices = torch.nonzero(self._edges, as_tuple=True)
         for start, end in zip(*edge_indices):
             weight = 1 / self._edges[start.item(), end.item()].item()
             graph.add_edge(start.item(), end.item(), weight=weight)
 
-        # Save the graph if a path is provided
-        if save_path is not None:
-            networkx.write_gexf(graph, save_path)
-            print(f"\033[92m✓ Graph saved to {save_path}\033[0m")
+        # Save the graph
+        networkx.write_gexf(graph, save_path)
+        print(f"\033[92m✓ Graph saved to {save_path}\033[0m")
 
 
     #----------- PRIVATE METHODS -----------#
