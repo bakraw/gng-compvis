@@ -67,7 +67,7 @@ class Visualization:
         """
         print("\033[94m⏲ Performing PCA (3D)...\033[0m" if third_dim
               else "\033[94m⏲ Performing PCA (2D)...\033[0m")
-
+            
         # Perform PCA
         # U -> principal components, S -> singular values, V -> projection matrix
         # We only need to use the first two or three columns of the projection matrix on the nodes.
@@ -170,6 +170,26 @@ class Visualization:
         self._plot(save_path, third_dim, projected_nodes,
                    ("UMAP 1st component", "UMAP 2nd component", "UMAP 3rd component") if third_dim
                    else ("UMAP 1st component", "UMAP 2nd component"), "UMAP")
+        
+
+    def direct(self, save_path=None):
+        """
+        Plot the graph without dimensionnality reduction. Requires the graph to have 3 dimensions or 
+        
+        :param save_path: Path to save the plot to. If None, the plot will only be displayed.
+        """
+
+        print("\033[94m⏲ Plotting data...\033[0m")
+
+        if self._nodes.shape[1] > 3:
+            raise ValueError("Direct plot requires the graph to have 3 dimensions or less.")
+
+        third_dim = self._nodes.shape[1] == 3
+
+        # Plot the results.
+        self._plot(save_path, third_dim, self._nodes,
+                   ("1st dimension", "2nd dimension", "3rd dimension") if third_dim
+                   else ("1st dimension", "2nd dimension"), "Direct")
         
 
     def to_gexf(self, save_path):
